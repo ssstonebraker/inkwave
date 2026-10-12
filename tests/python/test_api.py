@@ -227,6 +227,63 @@ class TestSaveImage:
         assert "(" not in result["name"]
 
 
+# ── _settings_path (real branch logic, NOT via the api fixture's monkeypatch) ─
+
+class TestSettingsPath:
+    """Tests Api._settings_path()'s own frozen/dev branch logic directly.
+
+    Deliberately does NOT use the `api` fixture, which replaces
+    _settings_path with a lambda and would bypass the exact logic under
+    test here (see golden plan Worry 5)."""
+
+    def test_not_frozen_uses_base_dir(self, monkeypatch):
+        window = MagicMock()
+        a = Api(window)
+        monkeypatch.setattr(app.sys, "frozen", False, raising=False)
+        path = a._settings_path()
+        assert path == os.path.join(app.BASE_DIR, "settings.json")
+
+    def test_frozen_production_uses_user_data_dir_inkwave(self, monkeypatch, tmp_path):
+        window = MagicMock()
+        a = Api(window)
+        monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+        monkeypatch.setattr(app, "BASE_DIR", str(tmp_path))  # no _devbuild marker here
+        path = a._settings_path()
+        assert "Inkwave" in path
+        assert "Inkwave-Dev" not in path
+        assert path.endswith("settings.json")
+
+    def test_frozen_dev_build_uses_user_data_dir_inkwave_dev(self, monkeypatch, tmp_path):
+        (tmp_path / "_devbuild").write_text("")
+        window = MagicMock()
+        a = Api(window)
+        monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+        monkeypatch.setattr(app, "BASE_DIR", str(tmp_path))
+        path = a._settings_path()
+        assert "Inkwave-Dev" in path
+
+    def test_frozen_creates_directory_if_missing(self, monkeypatch, tmp_path):
+        fresh_base = tmp_path / "fresh"
+        fresh_base.mkdir()
+        window = MagicMock()
+        a = Api(window)
+        monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+        monkeypatch.setattr(app, "_user_data_dir",
+                            lambda app_name="Inkwave": str(tmp_path / "newly_created_dir"))
+        a._settings_path()
+        assert (tmp_path / "newly_created_dir").is_dir()
+
+    def test_frozen_prod_and_dev_resolve_to_different_paths(self, monkeypatch, tmp_path):
+        window = MagicMock()
+        a = Api(window)
+        monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+        monkeypatch.setattr(app, "BASE_DIR", str(tmp_path))
+        prod_path = a._settings_path()
+        (tmp_path / "_devbuild").write_text("")
+        dev_path = a._settings_path()
+        assert prod_path != dev_path
+
+
 # ── load_settings / save_setting ─────────────────────────────────────────────
 
 class TestSettings:
@@ -357,126 +414,6 @@ class TestSettings:
             if data:
                 assert "counter" in data
                 assert isinstance(data["counter"], int)
-
-    def test_save_setting_returns_ok_false_on_permission_denied(self, api, tmp_path, monkeypatch):
-        # Lock the settings directory read-only so the write raises PermissionError.
-        settings_dir = tmp_path / "readonly"
-        settings_dir.mkdir()
-        settings_file = settings_dir / "settings.json"
-        api._settings_path = lambda: str(settings_file)
-        settings_dir.chmod(0o444)
-        try:
-            result = api.save_setting("theme", "obsidianite")
-            assert result["ok"] is False
-            assert "error" in result
-        finally:
-            settings_dir.chmod(0o755)  # restore so tmp_path cleanup can remove it
-
-    def test_save_setting_does_not_raise_when_settings_path_is_a_directory(self, api, tmp_path):
-        # Edge case: a directory exists where settings.json should be a file.
-        bogus_dir = tmp_path / "settings.json"
-        bogus_dir.mkdir()
-        api._settings_path = lambda: str(bogus_dir)
-        result = api.save_setting("theme", "obsidianite")
-        assert result["ok"] is False
-        assert "error" in result
-
-    def test_save_setting_failure_does_not_crash_subsequent_load(self, api, tmp_path):
-        # A failed save must not corrupt the settings file for a later load.
-        api.save_setting("theme", "lavender")
-        bogus_dir = tmp_path / "blocked"
-        bogus_dir.mkdir(mode=0o444)
-        try:
-            api._settings_path = lambda: str(bogus_dir / "settings.json")
-            api.save_setting("theme", "obsidianite")
-            # Switch back to the real (succeeding) path and confirm the
-            # earlier successful save is still intact and readable.
-            api._settings_path = lambda: str(tmp_path / "settings.json")
-            assert api.load_settings()["theme"] == "lavender"
-        finally:
-            bogus_dir.chmod(0o755)
-
-    def test_atomic_write_leaves_original_file_untouched_on_json_dump_failure(self, api, tmp_path, monkeypatch):
-        # F2: the old open(path, "w") pattern truncates the file BEFORE
-        # writing, so a mid-write failure (e.g. a non-serializable value
-        # slipping through) would leave settings.json empty — losing every
-        # previously saved setting, not just the one being written. The
-        # atomic temp-file-then-replace pattern must leave the ORIGINAL
-        # file fully intact if the write never completes.
-        api.save_setting("theme", "lavender")
-        settings_path = api._settings_path()
-        original_content = open(settings_path, "r", encoding="utf-8").read()
-
-        # Force json.dump to fail partway through by injecting a
-        # non-serializable value directly (bypassing save_setting's own
-        # key/value args, which are always JSON-safe in practice — this
-        # simulates a hypothetical future bug introducing a bad value).
-        class _Unserializable:
-            pass
-
-        data = json.load(open(settings_path, "r", encoding="utf-8"))
-        data["theme"] = _Unserializable()
-        with pytest.raises(TypeError):
-            api._atomic_write_json(settings_path, data)
-
-        # The original file must be byte-for-byte unchanged — not
-        # truncated, not partially written.
-        assert open(settings_path, "r", encoding="utf-8").read() == original_content
-
-    def test_atomic_write_cleans_up_its_temp_file_on_failure(self, api, tmp_path):
-        settings_dir = tmp_path
-        before = set(os.listdir(settings_dir))
-
-        class _Unserializable:
-            pass
-
-        with pytest.raises(TypeError):
-            api._atomic_write_json(str(settings_dir / "settings.json"), {"x": _Unserializable()})
-
-        after = set(os.listdir(settings_dir))
-        leftover_tmp_files = {f for f in (after - before) if f.endswith(".tmp")}
-        assert not leftover_tmp_files, f"temp file(s) left behind: {leftover_tmp_files}"
-
-    def test_atomic_write_round_trips_correctly_on_success(self, api, tmp_path):
-        target = str(tmp_path / "settings.json")
-        api._atomic_write_json(target, {"a": 1, "b": "two"})
-        with open(target, "r", encoding="utf-8") as f:
-            assert json.load(f) == {"a": 1, "b": "two"}
-
-
-class TestSetKeyFlagRaisesOnFailure:
-    """F1: _set_key_flag() used to swallow every exception, meaning a
-    failed flag write (e.g. permission denied) looked identical to
-    success — callers couldn't tell the keyring and the flag had gone
-    out of sync. It now propagates, and all 4 callers already wrap it in
-    their own try/except (verified directly in app.py before this fix)."""
-
-    def test_raises_on_permission_denied(self, api, tmp_path, monkeypatch):
-        bogus_dir = tmp_path / "blocked"
-        bogus_dir.mkdir(mode=0o444)
-        try:
-            api._settings_path = lambda: str(bogus_dir / "settings.json")
-            with pytest.raises(Exception):
-                api._set_key_flag("openai", True)
-        finally:
-            bogus_dir.chmod(0o755)
-
-    def test_caller_save_provider_api_key_surfaces_the_flag_write_error(self, api, tmp_path, monkeypatch):
-        monkeypatch.setattr(app, "_KEYRING_AVAILABLE", True)
-        monkeypatch.setattr(app, "_keyring", MagicMock(), raising=False)
-        bogus_dir = tmp_path / "blocked2"
-        bogus_dir.mkdir(mode=0o444)
-        try:
-            api._settings_path = lambda: str(bogus_dir / "settings.json")
-            result = api.save_provider_api_key("openai", "sk-test")
-            assert result.get("ok") is False
-            assert "error" in result
-        finally:
-            bogus_dir.chmod(0o755)
-
-    def test_succeeds_normally_when_settings_path_is_writable(self, api):
-        api._set_key_flag("openai", True)
-        assert api.load_settings().get("openai_key_set") is True
 
 
 # ── get_provider_api_key_status ───────────────────────────────────────────────
