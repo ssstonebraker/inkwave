@@ -45,7 +45,7 @@ export function installMockPywebviewApi({ initialSettings, welcomeContent, initi
       },
       save_setting(key, value) {
         window.__inkwaveTestSettingsStore[key] = String(value);
-        return Promise.resolve({ success: true });
+        return Promise.resolve({ ok: true });
       },
       get_welcome() {
         if (welcomeContent === null) return Promise.resolve(null);
@@ -76,12 +76,67 @@ export function installMockPywebviewApi({ initialSettings, welcomeContent, initi
         return Promise.resolve({ path });
       },
       delete_file(path) {
+        // Real app.py contract is {success: bool, error?} — NOT {ok}.
+        // (save_setting/save_provider_api_key use {ok}; delete_file and
+        // open_path use {success} — two different shapes in the real
+        // backend, both mirrored exactly here rather than normalized,
+        // since normalizing would make the mock lie about what the
+        // real app actually returns.)
         delete window.__inkwaveTestDraftsRegistry[path];
-        return Promise.resolve({ ok: true });
+        return Promise.resolve({ success: true });
       },
       save_as(suggestedName) {
         const path = "/mock/saved/" + (suggestedName || "Untitled.md");
         return Promise.resolve({ path });
+      },
+      // Native file/folder picker dialogs — can't be driven from Playwright
+      // (OS-level dialog), so default to "user cancelled" (null), matching
+      // what the real pywebview create_file_dialog() returns on Cancel.
+      // Override via window.__inkwaveMockApiOverrides.open_file/open_folder
+      // in a specific test to simulate "user picked X".
+      open_file() {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.open_file;
+        if (override) return Promise.resolve(override());
+        return Promise.resolve(null);
+      },
+      open_folder() {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.open_folder;
+        if (override) return Promise.resolve(override());
+        return Promise.resolve(null);
+      },
+      list_dir(dirPath) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.list_dir;
+        if (override) return Promise.resolve(override(dirPath));
+        return Promise.resolve([]);
+      },
+      read_file(path) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.read_file;
+        if (override) return Promise.resolve(override(path));
+        return Promise.resolve({ path, content: "" });
+      },
+      // ── AI provider key management — in-memory flags only, mirrors
+      // app.py's get_provider_api_key_status (cached settings flag, never
+      // reads a real keychain) and save/delete_provider_api_key (which in
+      // the real app touch the OS keychain via the `keyring` package).
+      save_provider_api_key(provider, key) {
+        if (!key) return Promise.resolve({ ok: false, error: "Empty key" });
+        window.__inkwaveTestKeyFlags = window.__inkwaveTestKeyFlags || {};
+        window.__inkwaveTestKeyFlags[provider] = true;
+        return Promise.resolve({ ok: true });
+      },
+      get_provider_api_key_status(provider) {
+        window.__inkwaveTestKeyFlags = window.__inkwaveTestKeyFlags || {};
+        return Promise.resolve({ has_key: !!window.__inkwaveTestKeyFlags[provider] });
+      },
+      delete_provider_api_key(provider) {
+        window.__inkwaveTestKeyFlags = window.__inkwaveTestKeyFlags || {};
+        window.__inkwaveTestKeyFlags[provider] = false;
+        return Promise.resolve({ ok: true });
+      },
+      list_ollama_models() {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.list_ollama_models;
+        if (override) return Promise.resolve(override());
+        return Promise.resolve({ models: [] });
       },
       // Minimal stubs for API surface area main.js/init.js touch at
       // startup so unrelated code paths don't throw.
