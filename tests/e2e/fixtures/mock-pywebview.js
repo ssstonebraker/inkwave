@@ -138,6 +138,25 @@ export function installMockPywebviewApi({ initialSettings, welcomeContent, initi
         if (override) return Promise.resolve(override());
         return Promise.resolve({ models: [] });
       },
+      export_pdf(payload) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.export_pdf;
+        if (override) return Promise.resolve(override(payload));
+        // Default: real app.py behavior if the Save dialog is dismissed.
+        return Promise.resolve({ cancelled: true });
+      },
+      open_path(path) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.open_path;
+        if (override) return Promise.resolve(override(path));
+        return Promise.resolve({});
+      },
+      create_file(folderPath, filename) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.create_file;
+        if (override) return Promise.resolve(override(folderPath, filename));
+        const name = (filename || "Untitled.md").trim();
+        const path = folderPath + "/" + name;
+        window.__inkwaveTestDraftsRegistry[path] = "";
+        return Promise.resolve({ path, content: "" });
+      },
       // Minimal stubs for API surface area main.js/init.js touch at
       // startup so unrelated code paths don't throw.
       toggle_fullscreen() { return Promise.resolve(null); },
