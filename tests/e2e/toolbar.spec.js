@@ -58,7 +58,16 @@ test.describe("Toolbar — Open menu", () => {
     ]);
     await page.locator("#openBtn").click();
     await page.locator('#openMenu button[data-action="folder"]').click();
-    await expect(page.locator("#tree .tree-item")).toHaveCount(1, { timeout: 2000 });
+    // initTree() always renders the opened folder itself as the first
+    // .tree-item (root node) before its children load — so 2 total:
+    // the "project" root + the "notes.md" child from list_dir. Asserts
+    // the actual child FILE NAME rendered, not just a count, since a
+    // bare .tree-item count of 1 would have passed even if list_dir's
+    // entries never rendered at all (real bug this exact gap masked:
+    // see filetree-context-menu.spec.js and mock-pywebview.js's
+    // list_dir comment for the full story).
+    await expect(page.locator("#tree .tree-item")).toHaveCount(2, { timeout: 2000 });
+    await expect(page.locator("#tree .tree-item.file")).toContainText("notes.md");
   });
 });
 

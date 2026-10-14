@@ -105,9 +105,20 @@ export function installMockPywebviewApi({ initialSettings, welcomeContent, initi
         return Promise.resolve(null);
       },
       list_dir(dirPath) {
+        // Real app.py contract is {entries: [...], error?} — a BARE
+        // array (the original shape of this mock) is a real bug: in
+        // renderTreeChildren (js/filetree.js), `res.entries || []`
+        // against a bare array literal resolves to the native
+        // Array.prototype.entries method (truthy, since functions are
+        // truthy), not []. entries.forEach then throws TypeError,
+        // silently swallowed by loadChildren's .catch(() => {}) — so
+        // the file tree would render the root folder but NEVER its
+        // children, with zero visible error. Caught by writing an
+        // actual E2E test for context-menu-on-a-tree-child instead of
+        // just asserting .tree-item counts without checking file names.
         const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.list_dir;
-        if (override) return Promise.resolve(override(dirPath));
-        return Promise.resolve([]);
+        const entries = override ? override(dirPath) : [];
+        return Promise.resolve({ entries });
       },
       read_file(path) {
         const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.read_file;
