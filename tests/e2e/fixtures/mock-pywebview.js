@@ -70,6 +70,8 @@ export function installMockPywebviewApi({ initialSettings, welcomeContent, initi
         return Promise.resolve({ ok: true });
       },
       write_file(path, content) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.write_file;
+        if (override) return Promise.resolve(override(path, content));
         if (Object.prototype.hasOwnProperty.call(window.__inkwaveTestDraftsRegistry, path)) {
           window.__inkwaveTestDraftsRegistry[path] = content;
         }
@@ -82,10 +84,14 @@ export function installMockPywebviewApi({ initialSettings, welcomeContent, initi
         // backend, both mirrored exactly here rather than normalized,
         // since normalizing would make the mock lie about what the
         // real app actually returns.)
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.delete_file;
+        if (override) return Promise.resolve(override(path));
         delete window.__inkwaveTestDraftsRegistry[path];
         return Promise.resolve({ success: true });
       },
       save_as(suggestedName) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.save_as;
+        if (override) return Promise.resolve(override(suggestedName));
         const path = "/mock/saved/" + (suggestedName || "Untitled.md");
         return Promise.resolve({ path });
       },
@@ -130,16 +136,22 @@ export function installMockPywebviewApi({ initialSettings, welcomeContent, initi
       // reads a real keychain) and save/delete_provider_api_key (which in
       // the real app touch the OS keychain via the `keyring` package).
       save_provider_api_key(provider, key) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.save_provider_api_key;
+        if (override) return Promise.resolve(override(provider, key));
         if (!key) return Promise.resolve({ ok: false, error: "Empty key" });
         window.__inkwaveTestKeyFlags = window.__inkwaveTestKeyFlags || {};
         window.__inkwaveTestKeyFlags[provider] = true;
         return Promise.resolve({ ok: true });
       },
       get_provider_api_key_status(provider) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.get_provider_api_key_status;
+        if (override) return Promise.resolve(override(provider));
         window.__inkwaveTestKeyFlags = window.__inkwaveTestKeyFlags || {};
         return Promise.resolve({ has_key: !!window.__inkwaveTestKeyFlags[provider] });
       },
       delete_provider_api_key(provider) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.delete_provider_api_key;
+        if (override) return Promise.resolve(override(provider));
         window.__inkwaveTestKeyFlags = window.__inkwaveTestKeyFlags || {};
         window.__inkwaveTestKeyFlags[provider] = false;
         return Promise.resolve({ ok: true });
@@ -167,6 +179,26 @@ export function installMockPywebviewApi({ initialSettings, welcomeContent, initi
         const path = folderPath + "/" + name;
         window.__inkwaveTestDraftsRegistry[path] = "";
         return Promise.resolve({ path, content: "" });
+      },
+      // Real app.py chat() starts a background thread and returns
+      // {ok: True} immediately; the actual response streams via
+      // window.__chatChunk(chunk) repeatedly, then window.__chatDone(),
+      // or window.__chatError(msg) on failure (see app.py's _push_js /
+      // self._window.evaluate_js calls inside the background worker).
+      // Mirrored here as a synchronous same-tick call sequence rather
+      // than a real background thread — the JS-side contract (global
+      // callback functions) is identical either way, and a real test
+      // doesn't care about actual network/thread timing, only that the
+      // UI reacts correctly to each callback.
+      chat(messages, fileContexts) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.chat;
+        if (override) {
+          const result = override(messages, fileContexts);
+          return Promise.resolve(result);
+        }
+        // Default: no API key configured, matching the real
+        // _get_key()-returns-None path in app.py's chat().
+        return Promise.resolve({ ok: false, error: "no_api_key" });
       },
       // Minimal stubs for API surface area main.js/init.js touch at
       // startup so unrelated code paths don't throw.
