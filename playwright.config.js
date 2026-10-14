@@ -27,6 +27,17 @@ export default defineConfig({
   // 15 more tests (86 total) reintroduced it until dropped to 2.
   // See also: -c<seconds> below (asset caching), which independently
   // reduces total server load per worker regardless of worker count.
+  //
+  // Re-verified at 170 total tests (this comment's revision): per-
+  // invocation wall-clock time climbs when re-running `npx playwright
+  // test` repeatedly in a loop (each invocation cold-starts and tears
+  // down its own http-server, per webServer.reuseExistingServer only
+  // reusing an ALREADY-running server). That rising time is an
+  // artifact of repeated cold starts in a verification loop, not
+  // actual test flakiness — confirmed via a SINGLE invocation with
+  // `--repeat-each=3` (510 total test executions, one server
+  // lifecycle): 510/510 passed, ~1.5 minutes. This is representative
+  // of real usage (CI/a developer runs the suite once per invocation).
   workers: 2,
   forbidOnly: !!process.env.CI,
   retries: 0,
