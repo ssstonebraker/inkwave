@@ -76,6 +76,19 @@ async function readDraftsRegistry(page) {
 }
 
 /**
+ * Reads back the content most recently written to `path` via
+ * write_file() — covers ANY file (a regular file opened via
+ * open_file, not just scratch files tracked in the drafts registry).
+ * Returns undefined if write_file was never called for that path.
+ */
+async function readWrittenFile(page, path) {
+  return page.evaluate(
+    (p) => (window.__inkwaveTestWrittenFiles || {})[p],
+    path,
+  );
+}
+
+/**
  * Simulates quitting and relaunching Inkwave within the SAME Playwright
  * page: snapshots the current in-memory drafts registry, reloads
  * index.html fresh (new module graph, empty `tabs` array, exactly like
@@ -116,4 +129,4 @@ async function setMockOverride(page, apiMethod, returnValue) {
   );
 }
 
-export { gotoApp, simulatePythonPush, readPersistedSettings, readDraftsRegistry, simulateRelaunch, setMockOverride };
+export { gotoApp, simulatePythonPush, readPersistedSettings, readDraftsRegistry, readWrittenFile, simulateRelaunch, setMockOverride };
