@@ -222,7 +222,8 @@ test.describe("Cmd+N scratch-file tabs", () => {
     // Exit inline-edit before Cmd+S (matches how a real user would tab
     // away / click elsewhere before saving).
     await page.keyboard.press("Escape");
-    await page.keyboard.press(CMD_N.replace("n", "s"));
+    const CMD_S = process.platform === "darwin" ? "Meta+s" : "Control+s";
+    await page.keyboard.press(CMD_S);
     await page.waitForTimeout(100);
 
     // The regression this guards against: getActiveTab() silently
