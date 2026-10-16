@@ -43,6 +43,18 @@ async function applyTheme(page, themeId) {
       document.body.setAttribute("data-theme", id);
     }
   }, themeId);
+  // Wait for the actual style recalc to land, not just the attribute
+  // mutation — document.body.setAttribute() returns before the
+  // browser has necessarily recomputed/painted the new CSS custom
+  // property values. On a slower or CPU-contended runner (observed on
+  // a 3-parallel-worker Linux VM run but not on an uncontended Mac
+  // run), the next action (clicking #rawModeBtn) could fire before the
+  // theme's new --toolbar-bg has actually taken effect, leaving a
+  // brief window where the gutter reports zero size mid-recalc.
+  await page.waitForFunction((id) => {
+    const expectedAttr = id === "obsidianite" ? null : id;
+    return document.body.getAttribute("data-theme") === expectedAttr;
+  }, themeId);
 }
 
 async function measureContrastRatio(page, selector, bgSelector) {
@@ -195,10 +207,18 @@ async function samplePaintedGutterPixels(page) {
   // current line keeps this test measuring the plain --gutter-text
   // rule, matching what measureContrastRatio() asserts elsewhere.
   const marker = page.locator(".raw-editor-line-number").nth(1);
-  await marker.waitFor({ state: "visible", timeout: 5000 });
+  // Poll real layout dimensions, not just CSS visibility — see the
+  // matching comment at the call site in the "actually painted" test
+  // for why toBeVisible()/waitFor("visible") alone was insufficient on
+  // a contended runner.
+  let markerBox = null;
+  for (let attempt = 0; attempt < 25; attempt++) {
+    markerBox = await marker.boundingBox();
+    if (markerBox && markerBox.width > 0 && markerBox.height > 0) break;
+    await page.waitForTimeout(200);
+  }
 
   const gutterBox = await gutter.boundingBox();
-  const markerBox = await marker.boundingBox();
   if (!gutterBox || gutterBox.width === 0 || gutterBox.height === 0) {
     return { error: "gutter has zero size — not painted" };
   }
@@ -330,13 +350,19 @@ test.describe("Gutter visual proof — real painted pixels, not just CSSOM (regr
       await openDoc(page, "line one\nline two\nline three\nline four\nline five");
       await applyTheme(page, themeId);
       await page.locator("#rawModeBtn").click();
-      // Wait for line 2 specifically, not just line 1 — line 2 (not
-      // line 1, which is "current" and gets a highlight overlay) is
-      // what samplePaintedGutterPixels() below actually measures. On
-      // slower/parallel-worker CI environments, line 1 can report
-      // visible before line 2 has finished layout, causing a
-      // zero-size boundingBox() race on the element this test reads.
-      await expect(page.locator(".raw-editor-line-number").nth(1)).toBeVisible();
+      // Playwright's toBeVisible() only checks CSS visibility/display,
+      // not actual non-zero layout dimensions — an element can be
+      // "visible" by that definition while still mid-reflow with
+      // width/height still 0 on a slow/contended runner (observed: 1-11
+      // flaky failures per run on a 3-parallel-worker Linux VM, 0 on an
+      // uncontended Mac run). Poll the real boundingBox() the pixel
+      // sampler below actually needs, not a CSS-only visibility check.
+      await expect
+        .poll(async () => {
+          const box = await page.locator(".raw-editor-line-number").nth(1).boundingBox();
+          return box ? box.width > 0 && box.height > 0 : false;
+        }, { timeout: 5000 })
+        .toBe(true);
 
       const result = await samplePaintedGutterPixels(page);
       expect(result, `theme "${themeId}": pixel sample returned no result`).toBeTruthy();
