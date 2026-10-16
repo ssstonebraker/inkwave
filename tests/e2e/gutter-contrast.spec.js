@@ -195,6 +195,7 @@ async function samplePaintedGutterPixels(page) {
   // current line keeps this test measuring the plain --gutter-text
   // rule, matching what measureContrastRatio() asserts elsewhere.
   const marker = page.locator(".raw-editor-line-number").nth(1);
+  await marker.waitFor({ state: "visible", timeout: 5000 });
 
   const gutterBox = await gutter.boundingBox();
   const markerBox = await marker.boundingBox();
@@ -329,7 +330,13 @@ test.describe("Gutter visual proof — real painted pixels, not just CSSOM (regr
       await openDoc(page, "line one\nline two\nline three\nline four\nline five");
       await applyTheme(page, themeId);
       await page.locator("#rawModeBtn").click();
-      await expect(page.locator(".raw-editor-line-number").first()).toBeVisible();
+      // Wait for line 2 specifically, not just line 1 — line 2 (not
+      // line 1, which is "current" and gets a highlight overlay) is
+      // what samplePaintedGutterPixels() below actually measures. On
+      // slower/parallel-worker CI environments, line 1 can report
+      // visible before line 2 has finished layout, causing a
+      // zero-size boundingBox() race on the element this test reads.
+      await expect(page.locator(".raw-editor-line-number").nth(1)).toBeVisible();
 
       const result = await samplePaintedGutterPixels(page);
       expect(result, `theme "${themeId}": pixel sample returned no result`).toBeTruthy();
