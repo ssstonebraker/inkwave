@@ -100,7 +100,55 @@ export function installMockPywebviewApi({ initialSettings, welcomeContent, initi
       },
       delete_file(path) {
         delete window.__inkwaveTestDraftsRegistry[path];
+        if (window.__inkwaveTestWrittenFiles) {
+          delete window.__inkwaveTestWrittenFiles[path];
+        }
         return Promise.resolve({ ok: true });
+      },
+      // Real Python's open_file() shows a native file-picker dialog and
+      // returns {root, path, content} on selection, or null if the user
+      // cancels. Tests drive this via setMockOverride(page, "open_file",
+      // {...}) — see openDoc() in editor-mode-affordances.spec.js and
+      // gutter-contrast.spec.js. No override set == dialog cancelled
+      // (matches real pywebview behavior, never a bare throw).
+      open_file() {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.open_file;
+        if (override) return Promise.resolve(override());
+        return Promise.resolve(null);
+      },
+      // Same override pattern as open_file above — real pywebview shows
+      // a native folder-picker and returns {root, path, error?} or null
+      // on cancel. Called from onOpenFolder() in js/ui.js.
+      open_folder() {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.open_folder;
+        if (override) return Promise.resolve(override());
+        return Promise.resolve(null);
+      },
+      // Called from loadChildren() in js/filetree.js to lazily expand a
+      // tree node. Real Python returns {entries: [...]}; empty-array
+      // default means an unconfigured override just shows no children
+      // rather than throwing.
+      list_dir(path) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.list_dir;
+        if (override) return Promise.resolve(override(path));
+        return Promise.resolve({ entries: [] });
+      },
+      // Called from js/filetree.js (tree click) and js/ui.js (drag-and-drop
+      // open) to load an existing file's content without re-running the
+      // open_file dialog. Real Python returns {path, content}; null
+      // default matches "file not found/unreadable" rather than throwing.
+      read_file(path) {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.read_file;
+        if (override) return Promise.resolve(override(path));
+        return Promise.resolve(null);
+      },
+      // Called from js/settings.js to populate the Ollama model picker.
+      // Real Python returns {models: [...]}; empty-array default means
+      // an unconfigured override shows no models rather than throwing.
+      list_ollama_models() {
+        const override = window.__inkwaveMockApiOverrides && window.__inkwaveMockApiOverrides.list_ollama_models;
+        if (override) return Promise.resolve(override());
+        return Promise.resolve({ models: [] });
       },
       save_as(suggestedName) {
         const path = "/mock/saved/" + (suggestedName || "Untitled.md");
