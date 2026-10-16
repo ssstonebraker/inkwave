@@ -131,8 +131,13 @@ async function samplePaintedGutterPixels(page) {
         `<foreignObject width="100%" height="100%">` +
         `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${w}px;height:${h}px;">${xml}</div>` +
         `</foreignObject></svg>`;
-      const svgBlob = new Blob([svgMarkup], { type: "image/svg+xml" });
-      const url = URL.createObjectURL(svgBlob);
+      // data: URI, not blob: — blob: URLs fire a page.on("request")
+      // network event in this harness's offline-enforcement check
+      // (helpers.js gotoApp()), which correctly treats any non-local
+      // request as a regression. A data: URI assigned to img.src is
+      // resolved synchronously in-process and never triggers that event.
+      const base64Svg = btoa(unescape(encodeURIComponent(svgMarkup)));
+      const url = "data:image/svg+xml;base64," + base64Svg;
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
@@ -140,7 +145,6 @@ async function samplePaintedGutterPixels(page) {
         canvas.height = h;
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0);
-        URL.revokeObjectURL(url);
 
         const imgData = ctx.getImageData(0, 0, w, h).data;
         // Sample the background in a corner away from any text glyph.
